@@ -20,6 +20,7 @@ fi
 mkdir -p dist
 cp -R apps/web/dist/. dist/
 mv dist/index.html dist/app.html
-cp -R apps/site/dist/assets/. dist/assets/
-cp apps/site/dist/index.html dist/index.html
+# Site last: its index.html becomes /, its public files (favicon, deploy.html) sit beside it.
+cp -R apps/site/dist/. dist/
+test -f dist/deploy.html && test -f dist/app.html
 echo "dist ready: $(du -sh dist | cut -f1)"
