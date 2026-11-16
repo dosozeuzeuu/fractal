@@ -30,6 +30,7 @@ export default function Landing() {
             <a href="#functions">How it works</a>
             <a href="#demo">What stays private</a>
             <a href="#faq">Questions</a>
+            <a href="/terminal">Terminal</a>
           </nav>
           <a className="btn" href="/app">Open app</a>
         </header>
@@ -38,12 +39,12 @@ export default function Landing() {
           <p className="hero-kicker">private money on robinhood chain</p>
           <SplitText as="h1" text="Hide in the pattern." play={introDone} />
           <p className="lede">
-            Hold, send, swap and withdraw ETH and tokens from a private balance. The chain checks a zero-knowledge
+            Hold, send, trade, bridge and withdraw ETH and tokens from a private balance. The chain checks a zero-knowledge
             proof made in your browser, and never learns who paid whom.
           </p>
           <div className="hero-actions">
             <a className="btn" href="/app">Open the app</a>
-            <a className="btn ghost" href="#functions">See how it works</a>
+            <a className="btn ghost" href="/terminal">Open the terminal</a>
           </div>
         </div>
         <span className="hanko" aria-hidden="true">秘</span>
@@ -221,6 +222,8 @@ export default function Landing() {
         <div className="wrap">
           <Brand />
           <a href="/app">App</a>
+          <a href="/terminal">Terminal</a>
+          <a href="/app#bridge">Bridge</a>
           <a href="/receipt">Check a receipt</a>
           <p>Beta software, unaudited. Not affiliated with Robinhood. Privacy tools may be restricted where you live; you are responsible for following your local laws.</p>
         </div>

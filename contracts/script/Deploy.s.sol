@@ -43,6 +43,7 @@ contract Deploy is Script {
     address constant ROBINHOOD_SWAP_ROUTER02 = 0xCaf681a66D020601342297493863E78C959E5cb2;
     address constant ROBINHOOD_WETH = 0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73;
     address constant ROBINHOOD_ACROSS_SPOKE_POOL = 0xD29C85F15DF544bA632C9E25829fd29d767d7978;
+    address constant ROBINHOOD_USDG = 0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168;
     uint256 constant LOCAL_CHAIN_ID = 31337;
     uint256 constant ROBINHOOD_CHAIN_ID = 4663;
 
@@ -155,6 +156,7 @@ contract Deploy is Script {
             vault.setSwapAdapter(o.bridgeAdapter, true, true);
         }
         if (vm.envOr("AUTO_LIST", true)) vault.setSwapAdapter(address(0), true, false);
+        if (block.chainid == ROBINHOOD_CHAIN_ID) vault.setToken(ROBINHOOD_USDG, true, 30_000e6, 0);
         if (admin != deployer) {
             vault.grantRole(vault.DEFAULT_ADMIN_ROLE(), admin);
             vault.grantRole(vault.UPGRADER_ROLE(), admin);

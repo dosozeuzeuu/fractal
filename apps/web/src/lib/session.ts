@@ -30,7 +30,10 @@ async function prover(): Promise<ProverLike> {
       fetch('/circuit/transact.json').then((r) => r.json()),
       loadCrs(),
     ]);
-    return new Prover(circuit, { threads: Math.min(navigator.hardwareConcurrency || 4, 8), srs });
+    // Threads need a cross-origin isolated page (the wallet pages); elsewhere (the terminal, which
+    // embeds a chart) bb.js proves on one thread.
+    const threads = globalThis.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 4, 8) : 1;
+    return new Prover(circuit, { threads, srs });
   })();
   proverPromise.catch(() => (proverPromise = undefined));
   return proverPromise;

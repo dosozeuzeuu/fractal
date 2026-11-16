@@ -9,10 +9,11 @@ import { fmt, loadConfig, parseAmount, type AppConfig, type TokenInfo } from './
 import { connectWallet } from './lib/wallet';
 import { createClient, errorText, submitMode, tokenBy } from './lib/session';
 import { quote, routeData } from './lib/swap';
+import Bridge from './Bridge';
 
-type Tab = 'shield' | 'send' | 'swap' | 'withdraw' | 'link';
+type Tab = 'shield' | 'send' | 'swap' | 'withdraw' | 'link' | 'bridge';
 type Status = { kind: 'busy' | 'ok' | 'error'; text: string } | null;
-const TABS: [Tab, string][] = [['shield', 'Shield'], ['send', 'Send'], ['swap', 'Swap'], ['withdraw', 'Withdraw'], ['link', 'Link']];
+const TABS: [Tab, string][] = [['shield', 'Shield'], ['send', 'Send'], ['swap', 'Swap'], ['withdraw', 'Withdraw'], ['link', 'Link'], ['bridge', 'Bridge']];
 const ZERO = '0x0000000000000000000000000000000000000000';
 const SLIPPAGE_BPS = 100n; // 1%
 
@@ -77,7 +78,8 @@ function Activity({ client, config, notes, onCopy }: { client: PrivacyClient; co
       out.push({ key: `exit-${n.index}`, what: `Withdrew to ${short(n.memoTo)}`, amount: `${fmt(n.memoAmount, t)} ${t.symbol}`, incoming: false });
     }
     if (n.kind === 4 && n.memoAmount > 0n) {
-      out.push({ key: `swap-${n.index}`, what: `Swapped into ${tokenBy(config, n.memoToken).symbol}`, amount: `${fmt(n.memoAmount, t)} ${t.symbol}`, incoming: false });
+      const bridged = n.token === ZERO && n.memoToken === ZERO;
+      out.push({ key: `swap-${n.index}`, what: bridged ? `Bridged out to ${short(n.memoTo)}` : `Swapped into ${tokenBy(config, n.memoToken).symbol}`, amount: `${fmt(n.memoAmount, t)} ${t.symbol}`, incoming: false });
     }
     if (n.kind === 6) {
       const seed = encodeBase64Url(hexToBytes32(n.payRho));
@@ -119,7 +121,7 @@ export default function App() {
   const [notes, setNotes] = useState<OwnedNote[]>([]);
   const [balances, setBalances] = useState<Map<string, bigint>>(new Map());
   const [pendingSwaps, setPendingSwaps] = useState(0);
-  const [tab, setTab] = useState<Tab>('shield');
+  const [tab, setTab] = useState<Tab>(() => TABS.find(([t]) => t === location.hash.slice(1))?.[0] ?? 'shield');
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
   const [token, setToken] = useState<Address>(ZERO);
@@ -265,7 +267,7 @@ export default function App() {
   };
 
   const ethInfo = config?.tokens[0];
-  const actionLabel = { shield: 'Shield', send: 'Send privately', swap: 'Swap privately', withdraw: 'Withdraw', link: 'Create link' }[tab];
+  const actionLabel = { shield: 'Shield', send: 'Send privately', swap: 'Swap privately', withdraw: 'Withdraw', link: 'Create link', bridge: 'Bridge' }[tab];
   const privateAddr = useMemo(() => (active && client ? client.privateAddress() : ''), [active, client]);
 
   return (
@@ -275,6 +277,7 @@ export default function App() {
         <span className="spacer" />
         {config && <span className={`tag ${config.devVerifier ? 'dev' : 'on'}`}>{config.name}{config.devVerifier ? ' · test build' : ''}</span>}
         {client && <span className="tag mono">{short(client.address)}</span>}
+        <a className="btn ghost" href="/terminal">Terminal</a>
       </header>
 
       {!client && (
@@ -306,13 +309,16 @@ export default function App() {
             </div>
 
             <div className="tabs" role="tablist" aria-label="Action">
-              {TABS.map(([t, label]) => (
+              {TABS.filter(([t]) => t !== 'bridge' || config.bridge).map(([t, label]) => (
                 <button key={t} role="tab" aria-selected={tab === t} onClick={() => { setTab(t); setStatus(null); setNewLink(undefined); if (t === 'withdraw' && !to) setTo(client.address); }}>
                   {label}
                 </button>
               ))}
             </div>
 
+            {tab === 'bridge' && config.bridge ? (
+              <Bridge config={config} client={client} privateGas={privateGas} onDone={() => refresh()} />
+            ) : (<>
             {tab === 'swap' ? (
               <div className="row2">
                 <TokenSelect config={config} value={token} onChange={(a) => { setToken(a); if (a === tokenOut) setTokenOut(config.tokens.find((t) => t.address !== a)!.address); }} label="From" />
@@ -365,6 +371,7 @@ export default function App() {
             {status && <p className={`status ${status.kind}`} role="status">{status.text}</p>}
             {newLink && <CopyRow value={newLink} label="Copy link" />}
             {usesBundler && tab !== 'shield' && token !== ZERO && <p className="muted" style={{ fontSize: 13, margin: '10px 0 0' }}>Private gas is paid from your ETH notes.</p>}
+            </>)}
           </div>
 
           <div className="panel">

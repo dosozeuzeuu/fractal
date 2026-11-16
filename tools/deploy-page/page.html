@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>fractal deploy</title>
+<style>
+  :root { --bg: #000; --panel: #0c0c0c; --line: #2a2a2a; --grey: #8c8c8c; --white: #fff; --lime: #a6ff00; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: #d4d4d4; font: 16px/1.6 system-ui, sans-serif; }
+  main { width: min(760px, 100% - 32px); margin: 40px auto; }
+  h1 { color: var(--white); font-size: 28px; margin: 0 0 6px; }
+  h1 span { color: var(--lime); }
+  p { margin: 0 0 14px; }
+  .box { border: 1.5px solid var(--white); background: var(--panel); padding: 20px; margin: 16px 0; }
+  label { display: block; font-size: 14px; color: var(--grey); margin: 10px 0 4px; }
+  input { width: 100%; background: #000; color: #fff; border: 1px solid var(--line); padding: 12px; font: 14px ui-monospace, monospace; }
+  button { background: var(--white); color: #000; border: 0; font: 600 16px system-ui; padding: 14px 18px; cursor: pointer; width: 100%; margin-top: 14px; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li { display: grid; grid-template-columns: 22px 1fr; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  li:first-child { border-top: 0; }
+  li .s { font-family: ui-monospace, monospace; color: var(--grey); }
+  li.done .s { color: var(--lime); }
+  li.run .s { color: #fff; }
+  li .a { grid-column: 2; font: 12px ui-monospace, monospace; color: var(--grey); overflow-wrap: anywhere; }
+  .err { border: 1.5px solid #fff; padding: 12px; background: repeating-linear-gradient(-45deg, #0c0c0c 0 6px, #1b1b1b 6px 12px); color: #fff; margin-top: 14px; }
+  .ok { background: var(--lime); color: #000; padding: 12px; margin-top: 14px; }
+  pre { background: #000; border: 1px solid var(--line); padding: 12px; font-size: 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .muted { color: var(--grey); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>fractal <span>deploy</span></h1>
+  <p class="muted">Deploys the fractal contracts to Robinhood Chain from your browser wallet. Your keys stay in your wallet; this page only asks it to sign each transaction.</p>
+
+  <div class="box">
+    <p id="who">Not connected.</p>
+    <label for="team">Fee recipient (team). Defaults to your wallet.</label>
+    <input id="team" placeholder="0x…" spellcheck="false" autocomplete="off" />
+    <button id="connect">Connect wallet</button>
+    <button id="go" disabled>Deploy</button>
+    <div id="msg"></div>
+  </div>
+
+  <div class="box">
+    <ol id="steps"></ol>
+  </div>
+
+  <div class="box" id="outBox" hidden>
+    <p><strong>Deployed.</strong> Copy this and send it back in chat. It only contains public contract addresses.</p>
+    <pre id="out"></pre>
+    <button id="copy">Copy</button>
+  </div>
+</main>
+<script>
+/*__ARTIFACTS__*/
+const MAINNET = {
+  chainId: 4663,
+  entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
+  router: '0xCaf681a66D020601342297493863E78C959E5cb2',
+  weth: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
+  spokePool: '0xD29C85F15DF544bA632C9E25829fd29d767d7978',
+  usdg: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+};
+// ?test=1&entryPoint=…&router=…&weth=…&spokePool=… runs the same flow against a local chain (31337) only.
+const qs = new URLSearchParams(location.search);
+const TEST = qs.get('test') === '1';
+const NET = TEST
+  ? { chainId: 31337, entryPoint: qs.get('entryPoint'), router: qs.get('router'), weth: qs.get('weth'), spokePool: qs.get('spokePool'), usdg: qs.get('usdg') }
+  : MAINNET;
+const ETH_LARGE_EXIT = 10n * 10n ** 18n;
+const ETH_CAP = 50n * 10n ** 18n;
+const SWAP_FEE_BPS = 30n;
+const USDG_LARGE_EXIT = 30000n * 10n ** 6n;
+
+const $ = (id) => document.getElementById(id);
+const eth = window.ethereum;
+let account;
+
+const word = (x) => {
+  if (typeof x === 'string') { if (!/^0x[0-9a-fA-F]{40}$/.test(x)) throw new Error('bad address ' + x); return x.slice(2).toLowerCase().padStart(64, '0'); }
+  if (typeof x === 'boolean') return (x ? 1n : 0n).toString(16).padStart(64, '0');
+  return BigInt(x).toString(16).padStart(64, '0');
+};
+const enc = (...args) => args.map(word).join('');
+const call = (sel, ...args) => sel + enc(...args);
+const isAddr = (a) => /^0x[0-9a-fA-F]{40}$/.test(a);
+
+function linkVerifier(libs) {
+  let code = ART.HonkVerifier.slice(2);
+  for (const l of LINKS) for (const off of l.offsets) {
+    const i = off * 2;
+    if (!code.slice(i, i + 40).startsWith('__$')) throw new Error('link placeholder not found for ' + l.lib);
+    code = code.slice(0, i) + libs[l.lib].slice(2).toLowerCase() + code.slice(i + 40);
+  }
+  if (code.includes('__$')) throw new Error('verifier still has unlinked libraries');
+  return '0x' + code;
+}
+
+const rpc = (method, params = []) => eth.request({ method, params });
+async function receipt(hash) {
+  for (;;) {
+    const r = await rpc('eth_getTransactionReceipt', [hash]);
+    if (r) { if (r.status !== '0x1') throw new Error('transaction reverted: ' + hash); return r; }
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+}
+async function send(tx) {
+  const hash = await rpc('eth_sendTransaction', [{ from: account, ...tx }]);
+  return receipt(hash);
+}
+const hasCode = async (a) => (await rpc('eth_getCode', [a, 'latest'])) !== '0x';
+
+// Each step: id, label, run(state) → address (deploys) or true (calls).
+function plan(team) {
+  const S = SEL;
+  return [
+    { id: 'relationsLib', label: 'Verifier library: relations', deploy: () => ART.RelationsLib },
+    { id: 'transcriptLib', label: 'Verifier library: transcript', deploy: () => ART.ZKTranscriptLib },
+    { id: 'verifier', label: 'Proof verifier (UltraHonk)', deploy: (s) => linkVerifier({ RelationsLib: s.relationsLib, ZKTranscriptLib: s.transcriptLib }) },
+    { id: 'poseidon', label: 'Poseidon2 hash', deploy: () => ART.Poseidon2Yul },
+    { id: 'sponge', label: 'Poseidon2 sponge', deploy: () => ART.Poseidon2Sponge },
+    { id: 'feeCollector', label: 'Fee collector', deploy: () => ART.FeeCollector + enc(account, team, team) },
+    { id: 'implementation', label: 'Vault implementation', deploy: (s) => ART.PrivateVault + enc(s.verifier, s.poseidon, s.sponge, NET.entryPoint) },
+    { id: 'vault', label: 'Vault proxy, initialized', deploy: (s) => {
+      const init = call(S.initialize, account, s.feeCollector, ETH_LARGE_EXIT, ETH_CAP, SWAP_FEE_BPS).slice(2);
+      return ART.ERC1967Proxy + enc(s.implementation, 64n, BigInt(init.length / 2)) + init.padEnd(Math.ceil(init.length / 64) * 64, '0');
+    } },
+    { id: 'swapAdapter', label: 'Uniswap v3 adapter', deploy: (s) => ART.UniswapV3Adapter + enc(NET.router, NET.weth, s.vault) },
+    { id: 'setSwap', label: 'Allow the Uniswap adapter', call: (s) => ({ to: s.vault, data: call(S.setSwapAdapter, s.swapAdapter, true, false) }) },
+    { id: 'bridgeAdapter', label: 'Across bridge-out adapter', deploy: (s) => ART.AcrossBridgeAdapter + enc(NET.spokePool, NET.weth, s.vault) },
+    { id: 'depositHandler', label: 'Across bridge-in handler', deploy: (s) => ART.AcrossDepositHandler + enc(NET.spokePool, NET.weth, s.vault) },
+    { id: 'setBridge', label: 'Allow the bridge adapter', call: (s) => ({ to: s.vault, data: call(S.setSwapAdapter, s.bridgeAdapter, true, true) }) },
+    { id: 'setAutoList', label: 'Turn on auto-listing for the terminal', call: (s) => ({ to: s.vault, data: call(S.setSwapAdapter, '0x0000000000000000000000000000000000000000', true, false) }) },
+    ...(NET.usdg ? [{ id: 'setUsdg', label: 'List USDG', call: (s) => ({ to: s.vault, data: call(S.setToken, NET.usdg, true, USDG_LARGE_EXIT, 0n) }) }] : []),
+  ];
+}
+
+const key = () => `fractal-deploy:${NET.chainId}:${account.toLowerCase()}:${VK_HASH}`;
+const load = () => { try { return JSON.parse(localStorage.getItem(key()) || '{}'); } catch { return {}; } };
+const save = (s) => { try { localStorage.setItem(key(), JSON.stringify(s)); } catch {} };
+
+function render(steps, s, running) {
+  $('steps').innerHTML = '';
+  for (const st of steps) {
+    const li = document.createElement('li');
+    const done = s[st.id] !== undefined;
+    li.className = done ? 'done' : running === st.id ? 'run' : '';
+    li.innerHTML = `<span class="s">${done ? '✓' : running === st.id ? '…' : '·'}</span><span></span>`;
+    li.children[1].textContent = st.label;
+    if (typeof s[st.id] === 'string') { const a = document.createElement('span'); a.className = 'a'; a.textContent = s[st.id]; li.appendChild(a); }
+    $('steps').appendChild(li);
+  }
+}
+const say = (cls, text) => { $('msg').innerHTML = ''; if (!text) return; const d = document.createElement('div'); d.className = cls; d.textContent = text; $('msg').appendChild(d); };
+
+function output(s, startBlock) {
+  const ZERO = '0x0000000000000000000000000000000000000000';
+  const d = {
+    chainId: NET.chainId, startBlock, implementation: s.implementation, feeCollector: s.feeCollector,
+    entryPoint: NET.entryPoint, swapAdapter: s.swapAdapter, tokenA: ZERO, tokenB: ZERO, tokenC: ZERO,
+    bridgeAdapter: s.bridgeAdapter, depositHandler: s.depositHandler, spokePool: NET.spokePool, weth: NET.weth,
+    devVerifier: false, vault: s.vault, verifier: s.verifier, vkHash: VK_HASH, deployer: account,
+  };
+  $('out').textContent = JSON.stringify(d, null, 2);
+  $('outBox').hidden = false;
+}
+
+$('connect').onclick = async () => {
+  try {
+    if (!eth) throw new Error('No browser wallet found. Open this page in a browser with MetaMask, Rabby or similar.');
+    [account] = await rpc('eth_requestAccounts');
+    let chain = parseInt(await rpc('eth_chainId'), 16);
+    if (chain !== NET.chainId && !TEST) {
+      try { await rpc('wallet_switchEthereumChain', [{ chainId: '0x' + NET.chainId.toString(16) }]); }
+      catch { await rpc('wallet_addEthereumChain', [{ chainId: '0x1237', chainName: 'Robinhood Chain', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://rpc.mainnet.chain.robinhood.com'], blockExplorerUrls: ['https://robinhoodchain.blockscout.com'] }]); }
+      chain = parseInt(await rpc('eth_chainId'), 16);
+    }
+    if (chain !== NET.chainId) throw new Error(`Switch your wallet to chain ${NET.chainId} first.`);
+    for (const [k, a] of Object.entries({ EntryPoint: NET.entryPoint, 'Uniswap router': NET.router, WETH: NET.weth, 'Across SpokePool': NET.spokePool })) {
+      if (!isAddr(a || '') || !(await hasCode(a))) throw new Error(`${k} not found on this chain (${a}). Nothing was sent.`);
+    }
+    const bal = BigInt(await rpc('eth_getBalance', [account, 'latest']));
+    $('who').textContent = `Connected ${account} on chain ${chain}. Balance ${(Number(bal) / 1e18).toFixed(5)} ETH. You become the vault admin.`;
+    const s = load();
+    render(plan(account), s);
+    $('go').disabled = false;
+    $('go').textContent = Object.keys(s).length ? 'Continue deploying' : 'Deploy (about 15 wallet confirmations)';
+    say('', '');
+  } catch (e) { say('err', e.message || String(e)); }
+};
+
+$('go').onclick = async () => {
+  const team = $('team').value.trim() || account;
+  if (!isAddr(team)) return say('err', 'The fee recipient is not a valid address.');
+  $('go').disabled = true; $('connect').disabled = true;
+  const s = load();
+  const steps = plan(team);
+  try {
+    if (s.startBlock === undefined) { s.startBlock = parseInt(await rpc('eth_blockNumber'), 16); save(s); }
+    for (const st of steps) {
+      if (s[st.id] !== undefined) continue;
+      render(steps, s, st.id);
+      say('', '');
+      if (st.deploy) {
+        const r = await send({ data: st.deploy(s) });
+        if (!r.contractAddress || !(await hasCode(r.contractAddress))) throw new Error(`${st.label}: no contract was created`);
+        s[st.id] = r.contractAddress;
+      } else {
+        await send(st.call(s));
+        s[st.id] = true;
+      }
+      save(s);
+    }
+    render(steps, s);
+    // Sanity checks against the live vault.
+    const read = async (data) => rpc('eth_call', [{ to: s.vault, data }, 'latest']);
+    const ok = (h) => BigInt(h) === 1n;
+    if (!ok(await read(call(SEL.swapAdapters, s.swapAdapter)))) throw new Error('check failed: Uniswap adapter not allowed');
+    if (!ok(await read(call(SEL.bridgeAdapters, s.bridgeAdapter)))) throw new Error('check failed: bridge adapter not allowed');
+    if (!ok(await read(SEL.autoList))) throw new Error('check failed: auto-listing off');
+    if (!ok(await read(call(SEL.hasRole, 0n, account)))) throw new Error('check failed: you are not the vault admin');
+    say('ok', 'All contracts deployed and checked.');
+    output(s, s.startBlock);
+  } catch (e) {
+    render(steps, s);
+    say('err', (e.message || String(e)) + ' Press the button again to continue from this step.');
+    $('go').disabled = false; $('go').textContent = 'Continue deploying';
+  } finally { $('connect').disabled = false; }
+};
+
+$('copy').onclick = () => navigator.clipboard.writeText($('out').textContent).then(() => { $('copy').textContent = 'Copied'; });
+</script>
+</body>
+</html>

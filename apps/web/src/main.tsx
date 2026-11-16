@@ -11,11 +11,12 @@ import './styles.css';
 // and the wallet/proving code is not bundled at all.
 const Soon = lazy(() => import('./Soon'));
 const pages = import.meta.env.VITE_PREVIEW
-  ? { '/app': Soon, '/claim': Soon, '/receipt': Soon }
+  ? { '/app': Soon, '/claim': Soon, '/receipt': Soon, '/terminal': Soon }
   : {
       '/app': lazy(() => import('./App')),
       '/claim': lazy(() => import('./Claim')),
       '/receipt': lazy(() => import('./Receipt')),
+      '/terminal': lazy(() => import('./Terminal')),
     };
 const path = window.location.pathname.replace(/\/+$/, '') as keyof typeof pages;
 const Page = pages[path];
