@@ -1,0 +1,1 @@
+{"name":"fractal-contracts","private":true,"dependencies":{"@account-abstraction/contracts":"^0.8.0","@openzeppelin/contracts":"^5.4.0","@openzeppelin/contracts-upgradeable":"^5.4.0"}}

@@ -1,0 +1,9 @@
+[package]
+name = "transact"
+type = "bin"
+authors = ["fractal"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+poseidon = { path = "../../vendor/poseidon" }
+keccak256 = { path = "../../vendor/keccak256" }

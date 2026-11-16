@@ -1,0 +1,31 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["node_modules", "../vendor"]
+solc_version = "0.8.38"
+optimizer = true
+optimizer_runs = 1 # smallest code: keeps the vault under the 24 KB limit (gas on Robinhood Chain is cheap)
+via_ir = false
+evm_version = "prague"
+ffi = true
+fs_permissions = [{ access = "read", path = "./test" }, { access = "read", path = "./" }, { access = "read-write", path = "./deployments" }, { access = "read", path = "../circuits" }, { access = "read", path = "../vendor" }]
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/",
+  "@account-abstraction/contracts/=node_modules/@account-abstraction/contracts/",
+  "forge-std/=../vendor/forge-std/src/",
+  "poseidon2-evm/=../vendor/poseidon2-evm/src/",
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[lint]
+lint_on_build = false
+
+[rpc_endpoints]
+local = "http://127.0.0.1:8545"
+robinhood_testnet = "${ROBINHOOD_TESTNET_RPC}"
+robinhood = "${ROBINHOOD_RPC}"

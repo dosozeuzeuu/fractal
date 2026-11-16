@@ -1,0 +1,14 @@
+node_modules/
+.toolchain/
+circuits/target/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+apps/web/dist/
+.env
+*.log
+apps/site/dist/
+tools/deploy-page/dist/
+contracts/deployments/31337.json
+apps/web/public/config.json
+.vercel
