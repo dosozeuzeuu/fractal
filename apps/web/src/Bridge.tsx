@@ -9,7 +9,8 @@ import {
   type AcrossQuote,
   type PrivacyClient,
 } from '@fractal/sdk';
-import type { AppConfig } from './lib/config';
+import { normalizeAmount, type AppConfig } from './lib/config';
+import { report } from './lib/report';
 import { errorText, submitMode } from './lib/session';
 import { sendOnChain } from './lib/wallet';
 
@@ -44,7 +45,7 @@ export default function Bridge({
 
   const value = useMemo(() => {
     try {
-      const v = parseEther(amount.trim() as `${number}`);
+      const v = parseEther(normalizeAmount(amount) as `${number}`);
       return v > 0n ? v : null;
     } catch {
       return null;
@@ -76,6 +77,7 @@ export default function Bridge({
   }, [value, dir, chain, to]);
 
   async function go() {
+    report(`bridge-${dir}`, 'click', { message: value ? '' : 'no amount' });
     if (!value) return;
     setBusy(true);
     try {
@@ -88,8 +90,9 @@ export default function Bridge({
         if (!isAddress(to)) throw new Error(`Enter the 0x address that should receive the ETH on ${chainName}.`);
         const refund = (refundTo.trim() ? refundTo.trim() : to) as Address;
         if (!isAddress(refund)) throw new Error('The refund address is not valid.');
-        setStatus({ kind: 'busy', text: 'Building your proof on this device. It takes a few seconds; then sign in your wallet.' });
         const mode = await submitMode(config, client, privateGas, CALL_GAS_SWAP);
+        report('bridge-out', 'mode', { message: mode.kind });
+        setStatus({ kind: 'busy', text: 'Building your proof on this device (up to a minute). Then confirm the signature in your wallet: if no window opens, click your wallet’s icon in the browser toolbar.' });
         await client.bridgeOut(value, b.adapter, {
           refundTo: refund,
           recipient: to as Address,
@@ -101,6 +104,7 @@ export default function Bridge({
           exclusivityDeadline: fresh.exclusivityDeadline,
           weth: b.weth,
         }, mode);
+        report('bridge-out', 'submitted');
         await new Promise((r) => setTimeout(r, mode.kind === 'bundler' ? 4000 : 0));
         await onDone();
         setStatus({
@@ -131,6 +135,7 @@ export default function Bridge({
       }
       setAmount('');
     } catch (e) {
+      report(`bridge-${dir}`, 'error', { message: errorText(e) });
       setStatus({ kind: 'error', text: errorText(e) });
     } finally {
       setBusy(false);
@@ -189,6 +194,13 @@ export default function Bridge({
       <button className="btn wide" onClick={go} disabled={busy || !value || (dir === 'out' && !isAddress(to))}>
         {dir === 'in' ? `Bridge in from ${chainName}` : `Bridge out to ${chainName}`}
       </button>
+      {!busy && !status && (!value || (dir === 'out' && !isAddress(to))) && (
+        <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>
+          {!value
+            ? amount.trim() ? 'That amount isn’t valid: use a dot for decimals, like 0.01.' : 'Enter an amount to continue.'
+            : `Enter the full 0x address that should receive the ETH on ${chainName}.`}
+        </p>
+      )}
       {status && <p className={`status ${status.kind}`} role="status">{status.text}</p>}
       <p className="muted" style={{ fontSize: 14, marginTop: 14 }}>
         Through Across. Leave time between bridging in and moving funds out, and vary amounts: the same amount in and out

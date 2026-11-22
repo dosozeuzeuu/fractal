@@ -69,9 +69,12 @@ export function chainOf(c: AppConfig): Chain {
 export const fmt = (amount: bigint, t: TokenInfo, digits = 6) =>
   Number(formatUnits(amount, t.decimals)).toLocaleString(undefined, { maximumFractionDigits: digits });
 
+/** Accepts "0.01" and "0,01" (comma decimals), with optional spaces. */
+export const normalizeAmount = (s: string) => s.trim().replace(/\s/g, '').replace(',', '.');
+
 export function parseAmount(s: string, t: TokenInfo): bigint | null {
   try {
-    const v = parseUnits(s.trim() as `${number}`, t.decimals);
+    const v = parseUnits(normalizeAmount(s) as `${number}`, t.decimals);
     return v > 0n ? v : null;
   } catch {
     return null;

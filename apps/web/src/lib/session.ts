@@ -4,6 +4,7 @@ import type { Account, Chain, Transport, WalletClient } from 'viem';
 import { loadCrs } from './crs';
 import type { AppConfig, TokenInfo } from './config';
 import { publicClientFor } from './wallet';
+import { report } from './report';
 
 /**
  * TEST BUILDS ONLY (VITE_TEST_PROVER_URL set at build time; absent from normal builds): proves on a
@@ -21,6 +22,13 @@ function testProver(url: string): ProverLike {
   };
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} took too long.`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 let proverPromise: Promise<ProverLike> | undefined;
 async function prover(): Promise<ProverLike> {
   proverPromise ??= (async () => {
@@ -31,9 +39,31 @@ async function prover(): Promise<ProverLike> {
       loadCrs(),
     ]);
     // Threads need a cross-origin isolated page (the wallet pages); elsewhere (the terminal, which
-    // embeds a chart) bb.js proves on one thread.
-    const threads = globalThis.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 4, 8) : 1;
-    return new Prover(circuit, { threads, srs });
+    // embeds a chart) bb.js proves on one thread. Some browsers and devices stall or run out of
+    // memory with many threads, so a multi-threaded proof that fails or stalls is retried once on a
+    // single thread, and the app stays on one thread after that.
+    let threads = globalThis.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 4, 4) : 1;
+    let inner: ProverLike = new Prover(circuit, { threads, srs });
+    return {
+      async prove(inputs) {
+        const t0 = performance.now();
+        report('proof', 'start', { threads });
+        try {
+          const out = await withTimeout(inner.prove(inputs), threads > 1 ? 90_000 : 300_000, 'Building the proof');
+          report('proof', 'done', { threads, ms: performance.now() - t0 });
+          return out;
+        } catch (e) {
+          report('proof', 'failed', { threads, ms: performance.now() - t0, message: e });
+          if (threads === 1) throw e;
+          threads = 1;
+          inner = new Prover(circuit, { threads: 1, srs });
+          report('proof', 'retry-single', { threads: 1 });
+          const out = await withTimeout(inner.prove(inputs), 300_000, 'Building the proof');
+          report('proof', 'done', { threads: 1, ms: performance.now() - t0 });
+          return out;
+        }
+      },
+    };
   })();
   proverPromise.catch(() => (proverPromise = undefined));
   return proverPromise;

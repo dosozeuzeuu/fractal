@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatUnits, parseUnits, type Address } from 'viem';
 import { CALL_GAS_SWAP, type OwnedNote, type PrivacyClient } from '@fractal/sdk';
 import { Brand } from './components/Logo';
-import { loadConfig, type AppConfig } from './lib/config';
+import { loadConfig, normalizeAmount, type AppConfig } from './lib/config';
+import { installErrorReports, report } from './lib/report';
 import { connectWallet } from './lib/wallet';
 import { createClient, errorText, submitMode } from './lib/session';
 import { chartUrl, search, terminalQuote, terminalRoute, tokenMeta, trending, usd, type Market } from './lib/terminal';
@@ -67,6 +68,7 @@ export default function Terminal() {
   const syncing = useRef(false);
 
   useEffect(() => {
+    installErrorReports();
     loadConfig().then(setConfig).catch((e) => setStatus({ kind: 'error', text: errorText(e) }));
   }, []);
 
@@ -94,7 +96,7 @@ export default function Terminal() {
   const inDecimals = side === 'buy' ? 18 : meta?.decimals ?? 18;
   const value = useMemo(() => {
     try {
-      const v = parseUnits(amount.trim() as `${number}`, inDecimals);
+      const v = parseUnits(normalizeAmount(amount) as `${number}`, inDecimals);
       return v > 0n ? v : null;
     } catch {
       return null;
@@ -156,6 +158,7 @@ export default function Terminal() {
       const done = await fn();
       setStatus(done ? { kind: 'ok', text: done } : null);
     } catch (e) {
+      report('terminal', 'error', { message: errorText(e) });
       setStatus({ kind: 'error', text: errorText(e) });
     } finally {
       setBusy(false);
@@ -187,8 +190,10 @@ export default function Terminal() {
       const tokenIn = side === 'buy' ? ZERO : sel.token;
       const tokenOut = side === 'buy' ? sel.token : ZERO;
       const p = await client.prepare({ token: tokenIn, swap: { tokenOut, amountIn: value, minOut, adapter: config.swap.adapter, data }, mode });
+      report('terminal', 'signed', { message: mode.kind });
       setStatus({ kind: 'busy', text: 'Submitting…' });
       await client.submit(p, mode);
+      report('terminal', 'submitted');
       await new Promise((r) => setTimeout(r, mode.kind === 'bundler' ? 4000 : 0));
       await refresh();
       return side === 'buy'

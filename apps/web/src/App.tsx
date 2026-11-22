@@ -6,6 +6,7 @@ import { CALL_GAS_EXIT, CALL_GAS_SWAP, encodeReceipt } from '@fractal/sdk/src/cl
 import { decodePrivateAddress, encodeBase64Url } from '@fractal/sdk/src/keys';
 import { Brand } from './components/Logo';
 import { fmt, loadConfig, parseAmount, type AppConfig, type TokenInfo } from './lib/config';
+import { installErrorReports, report } from './lib/report';
 import { connectWallet } from './lib/wallet';
 import { createClient, errorText, submitMode, tokenBy } from './lib/session';
 import { quote, routeData } from './lib/swap';
@@ -134,6 +135,7 @@ export default function App() {
   const syncing = useRef(false);
 
   useEffect(() => {
+    installErrorReports();
     loadConfig()
       .then((c) => { setConfig(c); setTokenOut(c.tokens[1]?.address ?? ZERO); })
       .catch((e) => setStatus({ kind: 'error', text: errorText(e) }));
@@ -180,6 +182,7 @@ export default function App() {
       const done = await fn();
       setStatus(done ? { kind: 'ok', text: done } : null);
     } catch (e) {
+      report(tab, 'error', { message: errorText(e) });
       setStatus({ kind: 'error', text: errorText(e) });
     } finally {
       setBusy(false);
@@ -212,6 +215,7 @@ export default function App() {
   const usesBundler = Boolean(config?.bundlerUrl) && privateGas;
 
   const submit = () => {
+    report(tab, 'click', { message: !client ? 'no client' : !config ? 'no config' : !value ? 'no amount' : !tIn ? 'no token' : '' });
     if (!client || !config || !value || !tIn) return;
     setNewLink(undefined);
     if (tab === 'shield') {
@@ -225,22 +229,27 @@ export default function App() {
     return run('Preparing…', async () => {
       const callGas = tab === 'swap' ? CALL_GAS_SWAP : CALL_GAS_EXIT;
       const mode = await submitMode(config, client, privateGas, callGas);
-      const proving = 'Building your proof on this device. It takes a few seconds; then sign in your wallet.';
+      report(tab, 'mode', { message: mode.kind });
+      const proving = 'Building your proof on this device (up to a minute). Then confirm the signature in your wallet: if no window opens, click your wallet’s icon in the browser toolbar.';
       let done: string;
       if (tab === 'send') {
         const keys = to.trim().startsWith('fx1') ? decodePrivateAddress(to) : isAddress(to) ? await client.recipientKeys(to) : null;
         if (!keys) throw new Error('Enter a 0x address or an fx1 private address.');
         setStatus({ kind: 'busy', text: proving });
         const p = await client.prepare({ token, pay: { to: keys, amount: value, memoTo: isAddress(to) ? to : undefined }, mode });
+        report(tab, 'signed');
         setStatus({ kind: 'busy', text: 'Submitting…' });
         await client.submit(p, mode);
+        report(tab, 'submitted');
         done = `Sent ${fmt(value, tIn)} ${tIn.symbol} privately.`;
       } else if (tab === 'withdraw') {
         if (!isAddress(to)) throw new Error('Enter the 0x address to withdraw to.');
         setStatus({ kind: 'busy', text: proving });
         const p = await client.prepare({ token, exit: { recipient: to, amount: value }, mode });
+        report(tab, 'signed');
         setStatus({ kind: 'busy', text: 'Submitting…' });
         await client.submit(p, mode);
+        report(tab, 'submitted');
         done = `Withdrew ${fmt(value - value / 100n, tIn)} ${tIn.symbol} to ${short(to)}.`;
       } else if (tab === 'swap') {
         if (!config.swap || !tOut) throw new Error('Swaps are not available on this network yet.');
@@ -248,14 +257,18 @@ export default function App() {
         const minOut = q - (q * SLIPPAGE_BPS) / 10_000n;
         setStatus({ kind: 'busy', text: proving });
         const p = await client.prepare({ token, swap: { tokenOut, amountIn: value, minOut, adapter: config.swap.adapter, data: routeData(config) }, mode });
+        report(tab, 'signed');
         setStatus({ kind: 'busy', text: 'Submitting…' });
         await client.submit(p, mode);
+        report(tab, 'submitted');
         done = `Swap sent. About ${fmt(q, tOut, 4)} ${tOut.symbol} will arrive in your private balance.`;
       } else {
         setStatus({ kind: 'busy', text: proving });
         const p = await client.prepare({ token, link: { amount: value }, mode });
+        report(tab, 'signed');
         setStatus({ kind: 'busy', text: 'Submitting…' });
         await client.submit(p, mode);
+        report(tab, 'submitted');
         setNewLink(`${location.origin}/claim#${encodeBase64Url(p.linkSeed!)}`);
         done = `Link created for ${fmt(value, tIn)} ${tIn.symbol}. Anyone with it can claim the funds, so share it only with the person you mean to pay.`;
       }
@@ -368,6 +381,7 @@ export default function App() {
             ) : (
               <button className="btn wide" onClick={submit} disabled={busy || !value || (tab === 'swap' && quoted === null)}>{actionLabel}</button>
             )}
+            {!busy && !status && !value && <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>{amount.trim() ? 'That amount isn’t valid: use a dot for decimals, like 0.01.' : 'Enter an amount to continue.'}</p>}
             {status && <p className={`status ${status.kind}`} role="status">{status.text}</p>}
             {newLink && <CopyRow value={newLink} label="Copy link" />}
             {usesBundler && tab !== 'shield' && token !== ZERO && <p className="muted" style={{ fontSize: 13, margin: '10px 0 0' }}>Private gas is paid from your ETH notes.</p>}

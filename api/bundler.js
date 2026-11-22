@@ -76,6 +76,7 @@ export default async function handler(req, res) {
   const reply = (id, body) => res.status(200).send(JSON.stringify({ jsonrpc: '2.0', id, ...body }));
   if (req.method !== 'POST') return res.status(405).send(JSON.stringify({ error: 'POST only' }));
   const { id = 1, method, params = [] } = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
+  console.log(JSON.stringify({ fractal: 'bundler', method }));
   try {
     if (!process.env.RELAYER_PRIVATE_KEY || !VAULT) throw new Error('private gas is not configured on this site yet');
     const publicClient = createPublicClient({ transport: http(RPC) });
@@ -104,6 +105,7 @@ export default async function handler(req, res) {
     return reply(id, { result: userOpHash, transactionHash: hash });
   } catch (e) {
     const message = (e && (e.shortMessage || e.message)) || String(e);
+    console.log(JSON.stringify({ fractal: 'bundler', method, error: message.split('\n')[0].replace(/0x[0-9a-fA-F]{6,}/g, '0x…').slice(0, 300) }));
     return reply(id, { error: { code: -32500, message: message.split('\n')[0] } });
   }
 }
