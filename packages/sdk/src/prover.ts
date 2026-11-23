@@ -29,26 +29,37 @@ export class Prover implements ProverLike {
    */
   constructor(
     private circuit: CompiledCircuit,
-    private options: { threads?: number; crsPath?: string; srs?: { g1: Uint8Array; g2: Uint8Array } } = {},
+    private options: {
+      threads?: number;
+      crsPath?: string;
+      srs?: { g1: Uint8Array; g2: Uint8Array };
+      /** Called as each step starts or ends (diagnostics). */
+      onStage?: (stage: string) => void;
+    } = {},
   ) {
     this.noir = new Noir(circuit);
   }
 
   private async init(): Promise<UltraHonkBackend> {
     if (!this.backend) {
-      const { threads, crsPath, srs } = this.options;
+      const { threads, crsPath, srs, onStage } = this.options;
+      onStage?.('bb-new');
       this.api = await Barretenberg.new({ threads, crsPath, skipSrsInit: Boolean(srs) } as never);
       if (srs) {
+        onStage?.('srs-init');
         await this.api.srsInitSrs({ pointsBuf: srs.g1, numPoints: srs.g1.length / 64, g2Point: srs.g2 });
       }
       this.backend = new UltraHonkBackend(this.circuit.bytecode, this.api);
+      onStage?.('backend-ready');
     }
     return this.backend;
   }
 
   async prove(inputs: InputMap): Promise<Proof> {
     const backend = await this.init();
+    this.options.onStage?.('witness');
     const { witness } = await this.noir.execute(inputs);
+    this.options.onStage?.('proving');
     const { proof, publicInputs } = await backend.generateProof(witness, { verifierTarget: 'evm' });
     return { proof: bytesToHex(proof), publicInputs: publicInputs as Hex[] };
   }

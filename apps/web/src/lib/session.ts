@@ -42,21 +42,27 @@ async function prover(): Promise<ProverLike> {
     // embeds a chart) bb.js proves on one thread. Some browsers and devices stall or run out of
     // memory with many threads, so a multi-threaded proof that fails or stalls is retried once on a
     // single thread, and the app stays on one thread after that.
+    const make = (n: number) => {
+      const t0 = performance.now();
+      return new Prover(circuit, { threads: n, srs, onStage: (stage) => report('proof', stage, { threads: n, ms: performance.now() - t0 }) });
+    };
     let threads = globalThis.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 4, 4) : 1;
-    let inner: ProverLike = new Prover(circuit, { threads, srs });
+    let inner = make(threads);
+    report('proof', 'device', { threads, message: `cores ${navigator.hardwareConcurrency ?? '?'} mem ${(navigator as { deviceMemory?: number }).deviceMemory ?? '?'}` });
     return {
       async prove(inputs) {
         const t0 = performance.now();
         report('proof', 'start', { threads });
         try {
-          const out = await withTimeout(inner.prove(inputs), threads > 1 ? 90_000 : 300_000, 'Building the proof');
+          const out = await withTimeout(inner.prove(inputs), threads > 1 ? 60_000 : 300_000, 'Building the proof');
           report('proof', 'done', { threads, ms: performance.now() - t0 });
           return out;
         } catch (e) {
           report('proof', 'failed', { threads, ms: performance.now() - t0, message: e });
           if (threads === 1) throw e;
+          inner.destroy().catch(() => undefined); // stop the stalled threads before retrying
           threads = 1;
-          inner = new Prover(circuit, { threads: 1, srs });
+          inner = make(1);
           report('proof', 'retry-single', { threads: 1 });
           const out = await withTimeout(inner.prove(inputs), 300_000, 'Building the proof');
           report('proof', 'done', { threads: 1, ms: performance.now() - t0 });
