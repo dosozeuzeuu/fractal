@@ -230,7 +230,7 @@ export default function App() {
       const callGas = tab === 'swap' ? CALL_GAS_SWAP : CALL_GAS_EXIT;
       const mode = await submitMode(config, client, privateGas, callGas);
       report(tab, 'mode', { message: mode.kind });
-      const proving = 'Building your proof on this device (up to a minute). Then confirm the signature in your wallet: if no window opens, click your wallet’s icon in the browser toolbar.';
+      const proving = 'Building your proof on this device (up to a minute; the page may pause while it works). Then confirm the signature in your wallet: if no window opens, click your wallet’s icon in the browser toolbar.';
       let done: string;
       if (tab === 'send') {
         const keys = to.trim().startsWith('fx1') ? decodePrivateAddress(to) : isAddress(to) ? await client.recipientKeys(to) : null;

@@ -1,4 +1,4 @@
-import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js';
+import { BackendType, Barretenberg, UltraHonkBackend } from '@aztec/bb.js';
 import { Noir, type CompiledCircuit, type InputMap } from '@noir-lang/noir_js';
 import { bytesToHex, type Hex } from 'viem';
 
@@ -35,6 +35,12 @@ export class Prover implements ProverLike {
       srs?: { g1: Uint8Array; g2: Uint8Array };
       /** Called as each step starts or ends (diagnostics). */
       onStage?: (stage: string) => void;
+      /**
+       * Browser only. 'worker' (default) proves in a Web Worker; 'main' proves on the page's own
+       * thread, with no worker at all. It blocks the page while proving, but works where a browser
+       * will not start bb.js's worker.
+       */
+      backend?: 'worker' | 'main';
     } = {},
   ) {
     this.noir = new Noir(circuit);
@@ -42,9 +48,14 @@ export class Prover implements ProverLike {
 
   private async init(): Promise<UltraHonkBackend> {
     if (!this.backend) {
-      const { threads, crsPath, srs, onStage } = this.options;
+      const { threads, crsPath, srs, onStage, backend } = this.options;
       onStage?.('bb-new');
-      this.api = await Barretenberg.new({ threads, crsPath, skipSrsInit: Boolean(srs) } as never);
+      this.api = await Barretenberg.new({
+        threads: backend === 'main' ? 1 : threads,
+        crsPath,
+        skipSrsInit: Boolean(srs),
+        ...(backend === 'main' ? { backend: BackendType.Wasm } : {}),
+      } as never);
       if (srs) {
         onStage?.('srs-init');
         await this.api.srsInitSrs({ pointsBuf: srs.g1, numPoints: srs.g1.length / 64, g2Point: srs.g2 });
@@ -53,6 +64,11 @@ export class Prover implements ProverLike {
       onStage?.('backend-ready');
     }
     return this.backend;
+  }
+
+  /** Starts the proving engine (and loads the CRS) without proving anything. */
+  async ready(): Promise<void> {
+    await this.init();
   }
 
   async prove(inputs: InputMap): Promise<Proof> {

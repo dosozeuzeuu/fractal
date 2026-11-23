@@ -42,31 +42,72 @@ async function prover(): Promise<ProverLike> {
     // embeds a chart) bb.js proves on one thread. Some browsers and devices stall or run out of
     // memory with many threads, so a multi-threaded proof that fails or stalls is retried once on a
     // single thread, and the app stays on one thread after that.
-    const make = (n: number) => {
+    type Engine = InstanceType<typeof Prover>;
+    const make = (n: number, backend: 'worker' | 'main') => {
       const t0 = performance.now();
-      return new Prover(circuit, { threads: n, srs, onStage: (stage) => report('proof', stage, { threads: n, ms: performance.now() - t0 }) });
+      return new Prover(circuit, {
+        threads: n, srs, backend,
+        onStage: (stage) => report('proof', `${backend}:${stage}`, { threads: n, ms: performance.now() - t0 }),
+      });
     };
-    let threads = globalThis.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 4, 4) : 1;
-    let inner = make(threads);
-    report('proof', 'device', { threads, message: `cores ${navigator.hardwareConcurrency ?? '?'} mem ${(navigator as { deviceMemory?: number }).deviceMemory ?? '?'}` });
+    const pageThread = () => new Promise((r) => setTimeout(r, 60)); // let the status text paint first
+    let forced: string | null = null;
+    try { forced = localStorage.getItem('fractal-prover'); } catch { /* storage blocked */ }
+    // Ways to run the engine, best first. Some browsers never start bb.js's Web Worker (seen on
+    // Chrome for macOS): then the engine runs on the page's own thread, which always works but
+    // freezes the page while it proves.
+    const plans: { threads: number; backend: 'worker' | 'main' }[] = forced === 'main'
+      ? [{ threads: 1, backend: 'main' }]
+      : [
+          ...(globalThis.crossOriginIsolated ? [{ threads: Math.min(navigator.hardwareConcurrency || 4, 4), backend: 'worker' as const }] : []),
+          { threads: 1, backend: 'worker' },
+          { threads: 1, backend: 'main' },
+        ];
+    report('proof', 'device', { message: `cores ${navigator.hardwareConcurrency ?? '?'} mem ${(navigator as { deviceMemory?: number }).deviceMemory ?? '?'} plans ${plans.map((p) => `${p.backend}${p.threads}`).join(',')}` });
+    let engine: Engine | undefined;
+    let plan = 0;
+
+    /** An engine that has started, trying each plan in turn. The choice sticks for the session. */
+    async function startedEngine(): Promise<Engine> {
+      for (; plan < plans.length; plan++) {
+        const { threads, backend } = plans[plan];
+        engine ??= make(threads, backend);
+        if (backend === 'main') await pageThread();
+        try {
+          await withTimeout(engine.ready(), backend === 'main' ? 120_000 : plan === 0 ? 20_000 : 10_000, 'Starting the proof engine');
+          // Remember a browser that needs the page-thread engine, so later visits skip the wait.
+          if (backend === 'main' && plans.length > 1) { try { localStorage.setItem('fractal-prover', 'main'); } catch { /* storage blocked */ } }
+          return engine;
+        } catch (e) {
+          report('proof', 'engine-failed', { threads, message: `${backend}: ${(e as Error)?.message ?? e}` });
+          engine.destroy().catch(() => undefined);
+          engine = undefined;
+        }
+      }
+      plan = plans.length - 1; // keep trying the last resort next time
+      throw new Error('This browser could not start the proof engine. Try Chrome or Brave with extensions turned off.');
+    }
+
     return {
       async prove(inputs) {
         const t0 = performance.now();
-        report('proof', 'start', { threads });
+        report('proof', 'start');
+        let e1: Engine;
         try {
-          const out = await withTimeout(inner.prove(inputs), threads > 1 ? 60_000 : 300_000, 'Building the proof');
-          report('proof', 'done', { threads, ms: performance.now() - t0 });
+          e1 = await startedEngine();
+        } catch (e) {
+          report('proof', 'failed', { ms: performance.now() - t0, message: e });
+          throw e;
+        }
+        const { threads, backend } = plans[plan];
+        if (backend === 'main') await pageThread();
+        try {
+          const out = await withTimeout(e1.prove(inputs), backend === 'main' || threads === 1 ? 300_000 : 90_000, 'Building the proof');
+          report('proof', 'done', { threads, ms: performance.now() - t0, message: backend });
           return out;
         } catch (e) {
-          report('proof', 'failed', { threads, ms: performance.now() - t0, message: e });
-          if (threads === 1) throw e;
-          inner.destroy().catch(() => undefined); // stop the stalled threads before retrying
-          threads = 1;
-          inner = make(1);
-          report('proof', 'retry-single', { threads: 1 });
-          const out = await withTimeout(inner.prove(inputs), 300_000, 'Building the proof');
-          report('proof', 'done', { threads: 1, ms: performance.now() - t0 });
-          return out;
+          report('proof', 'failed', { threads, ms: performance.now() - t0, message: `${backend}: ${(e as Error)?.message ?? e}` });
+          throw e;
         }
       },
     };

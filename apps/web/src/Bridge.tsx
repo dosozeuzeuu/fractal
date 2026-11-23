@@ -92,7 +92,7 @@ export default function Bridge({
         if (!isAddress(refund)) throw new Error('The refund address is not valid.');
         const mode = await submitMode(config, client, privateGas, CALL_GAS_SWAP);
         report('bridge-out', 'mode', { message: mode.kind });
-        setStatus({ kind: 'busy', text: 'Building your proof on this device (up to a minute). Then confirm the signature in your wallet: if no window opens, click your wallet’s icon in the browser toolbar.' });
+        setStatus({ kind: 'busy', text: 'Building your proof on this device (up to a minute; the page may pause while it works). Then confirm the signature in your wallet: if no window opens, click your wallet’s icon in the browser toolbar.' });
         await client.bridgeOut(value, b.adapter, {
           refundTo: refund,
           recipient: to as Address,
